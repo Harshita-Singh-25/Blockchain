@@ -1,0 +1,315 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TrustCart | Product Verification</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f6fb;
+      color: #172033;
+    }
+
+    header {
+      background: #172b4d;
+      color: white;
+      padding: 22px 8%;
+    }
+
+    header h1 { margin: 0 0 6px; }
+    header p { margin: 0; color: #dbe6f5; }
+
+    main {
+      max-width: 900px;
+      margin: 28px auto;
+      padding: 0 18px;
+    }
+
+    .card {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      box-shadow: 0 3px 14px #172b4d12;
+    }
+
+    h2 { margin-top: 0; }
+
+    input {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      border: 1px solid #ccd4e0;
+      border-radius: 6px;
+    }
+
+    button {
+      background: #1769aa;
+      color: white;
+      padding: 11px 16px;
+      border: 0;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 6px 5px 6px 0;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #wallet, #status, #result {
+      overflow-wrap: anywhere;
+      line-height: 1.6;
+    }
+
+    .muted { color: #5b6678; }
+    a { color: #1769aa; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>TrustCart</h1>
+    <p>Blockchain-based product registration and authenticity lookup</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Connect Wallet</h2>
+      <p class="muted">
+        Connect MetaMask using the Ethereum Sepolia test network.
+      </p>
+      <button id="connectBtn">Connect MetaMask</button>
+      <p id="wallet">Wallet not connected.</p>
+    </section>
+
+    <section class="card">
+      <h2>Register a Product</h2>
+      <p class="muted">
+        Register a unique product ID and its metadata identifier.
+      </p>
+
+      <input id="productId" type="number" min="1"
+             placeholder="Product ID (e.g. 1001)" />
+      <input id="productName" type="text"
+             placeholder="Product name (e.g. Premium Sneakers)" />
+      <input id="metadataHash" type="text"
+             placeholder="Metadata hash or identifier" />
+
+      <button id="registerBtn">Register Product</button>
+    </section>
+
+    <section class="card">
+      <h2>Verify a Product</h2>
+      <input id="verifyId" type="number" min="1"
+             placeholder="Enter registered product ID" />
+      <button id="verifyBtn">Verify Product</button>
+      <div id="result">Product details will appear here.</div>
+    </section>
+
+    <section class="card">
+      <h2>Transaction Status</h2>
+      <p id="status">Ready.</p>
+      <p id="txLink"></p>
+    </section>
+  </main>
+
+  <script>
+    // Replace this with YOUR deployed Sepolia contract address.
+    const CONTRACT_ADDRESS = "0x574C025F028e5AD91d1116Ec23229876AF21dB61";
+
+    const CONTRACT_ABI = [
+      "function registerProduct(uint256 _productId, string _productName, string _metadataHash)",
+      "function verifyProduct(uint256 _productId) view returns (bool exists, string productName, string metadataHash, address manufacturer, uint256 registeredAt)",
+      "function productExists(uint256) view returns (bool)",
+      "event ProductRegistered(uint256 indexed productId, string productName, string metadataHash, address indexed manufacturer, uint256 registeredAt)"
+    ];
+
+    const SEPOLIA_CHAIN_ID = 11155111n;
+
+    let provider;
+    let signer;
+    let contract;
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(message) {
+      $("status").textContent = message;
+    }
+
+    function showTx(hash) {
+      $("txLink").replaceChildren();
+
+      const link = document.createElement("a");
+      link.href = "https://sepolia.etherscan.io/tx/" + hash;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "View transaction on Sepolia Etherscan";
+
+      $("txLink").append(link);
+    }
+
+    async function connectWallet() {
+      try {
+        if (!window.ethereum) {
+          throw new Error("MetaMask was not detected. Install or unlock MetaMask.");
+        }
+
+        if (
+          CONTRACT_ADDRESS === "PASTE_YOUR_CONTRACT_ADDRESS_HERE" ||
+          !ethers.isAddress(CONTRACT_ADDRESS)
+        ) {
+          throw new Error("Paste your deployed contract address into index.html first.");
+        }
+
+        await window.ethereum.request({
+          method: "eth_requestAccounts"
+        });
+
+        provider = new ethers.BrowserProvider(window.ethereum);
+
+        const network = await provider.getNetwork();
+
+        if (network.chainId !== SEPOLIA_CHAIN_ID) {
+          throw new Error("Switch MetaMask to Ethereum Sepolia and reconnect.");
+        }
+
+        signer = await provider.getSigner();
+
+        contract = new ethers.Contract(
+          CONTRACT_ADDRESS,
+          CONTRACT_ABI,
+          signer
+        );
+
+        $("wallet").textContent =
+          "Connected account: " + await signer.getAddress();
+
+        setStatus("Wallet connected to Sepolia successfully.");
+      } catch (error) {
+        setStatus(error.shortMessage || error.message);
+      }
+    }
+
+    async function registerProduct() {
+      try {
+        if (!contract) {
+          throw new Error("Connect MetaMask first.");
+        }
+
+        const idText = $("productId").value.trim();
+        const name = $("productName").value.trim();
+        const metadata = $("metadataHash").value.trim();
+
+        if (!/^[1-9]\d*$/.test(idText)) {
+          throw new Error("Enter a positive whole-number product ID.");
+        }
+
+        if (!name || !metadata) {
+          throw new Error("Enter both product name and metadata identifier.");
+        }
+
+        const id = BigInt(idText);
+
+        if (await contract.productExists(id)) {
+          throw new Error("This product ID is already registered.");
+        }
+
+        setStatus("Please confirm the registration in MetaMask...");
+
+        const tx = await contract.registerProduct(id, name, metadata);
+
+        showTx(tx.hash);
+        setStatus("Transaction submitted. Waiting for confirmation...");
+
+        await tx.wait();
+
+        setStatus("Product registered successfully on Sepolia.");
+      } catch (error) {
+        setStatus(error.shortMessage || error.reason || error.message);
+      }
+    }
+
+    async function verifyProduct() {
+      try {
+        if (!contract) {
+          throw new Error("Connect MetaMask first.");
+        }
+
+        const idText = $("verifyId").value.trim();
+
+        if (!/^[1-9]\d*$/.test(idText)) {
+          throw new Error("Enter a valid positive product ID.");
+        }
+
+        const id = BigInt(idText);
+        const exists = await contract.productExists(id);
+
+        if (!exists) {
+          $("result").textContent =
+            "No product record found for ID " + idText + ".";
+          return;
+        }
+
+        const p = await contract.verifyProduct(id);
+
+        const details = [
+          ["Product ID", idText],
+          ["Product name", p.productName],
+          ["Metadata identifier", p.metadataHash],
+          ["Manufacturer", p.manufacturer],
+          ["Registered at", new Date(Number(p.registeredAt) * 1000).toLocaleString()],
+          ["Status", "Product record exists on Sepolia"]
+        ];
+
+        const output = document.createElement("div");
+
+        for (const [label, value] of details) {
+          const line = document.createElement("p");
+          const strong = document.createElement("strong");
+          strong.textContent = label + ": ";
+          line.append(strong, document.createTextNode(String(value)));
+          output.append(line);
+        }
+
+        $("result").replaceChildren(output);
+        setStatus("Product lookup completed.");
+      } catch (error) {
+        setStatus(error.shortMessage || error.reason || error.message);
+      }
+    }
+
+    $("connectBtn").addEventListener("click", connectWallet);
+    $("registerBtn").addEventListener("click", registerProduct);
+    $("verifyBtn").addEventListener("click", verifyProduct);
+
+    if (window.ethereum) {
+      window.ethereum.on("accountsChanged", () => {
+        contract = null;
+        signer = null;
+        provider = null;
+        $("wallet").textContent = "Account changed. Reconnect your wallet.";
+        setStatus("Reconnect MetaMask to continue.");
+      });
+
+      window.ethereum.on("chainChanged", () => {
+        contract = null;
+        signer = null;
+        provider = null;
+        $("wallet").textContent = "Network changed. Reconnect your wallet.";
+        setStatus("Switch back to Sepolia and reconnect.");
+      });
+    }
+  </script>
+</body>
+</html>
